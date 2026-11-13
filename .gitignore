@@ -5,3 +5,8 @@ __pycache__/
 uploads/
 node_modules/
 web-dist/
+khetsaathi.sqlite3
+/datasets/PlantSeg/*
+!/datasets/PlantSeg/README.md
+/.venv-plantseg/
+/training/plantseg/checkpoints/
