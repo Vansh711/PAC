@@ -113,7 +113,12 @@ async def home():
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "image_ai": bool(os.getenv("GEMINI_API_KEY")), "assistant_ai": bool(os.getenv("GROQ_API_KEY"))}
+    try:
+        from segmentation import available as segmentation_available
+        segmentation_enabled = segmentation_available()
+    except Exception:
+        segmentation_enabled = False
+    return {"ok": True, "image_ai": bool(os.getenv("GEMINI_API_KEY")), "assistant_ai": bool(os.getenv("GROQ_API_KEY")), "plant_disease_segmentation": segmentation_enabled}
 
 @app.post("/api/signup")
 async def signup(data: dict):
@@ -289,10 +294,18 @@ async def analyze(image: Annotated[UploadFile, File(...)], authorization: Annota
     content = await image.read()
     if len(content) > 8_000_000:
         raise HTTPException(413, "Image must be smaller than 8 MB.")
+    segmentation = None
+    try:
+        from segmentation import predict_overlay
+        segmentation = predict_overlay(content)
+    except Exception as exc:
+        # Segmentation is an optional enhancement and must not block the crop report.
+        print(f"PlantSeg U-Net inference skipped: {type(exc).__name__}: {exc}")
     key = os.getenv("GEMINI_API_KEY")
     if not key:
         raise HTTPException(503, "Gemini is not configured. Add GEMINI_API_KEY to .env and restart the API server.")
-    prompt = f"""You are a careful crop-health field assistant for Indian farmers. Examine only visual evidence present in the supplied photo. Farmer's known crops: {crop or 'unspecified'}. Write every human-readable value in {language}, using that language's normal script. Return ONLY valid JSON with this exact structure:
+    segmentation_context = (f"A separate PlantSeg U-Net marked about {segmentation['lesion_coverage_percent']}% of the image as lesion-like. This is only a spatial cue and may be wrong; independently inspect the photo." if segmentation else "")
+    prompt = f"""You are a careful crop-health field assistant for Indian farmers. Examine only visual evidence present in the supplied photo. Farmer's known crops: {crop or 'unspecified'}. {segmentation_context} Write every human-readable value in {language}, using that language's normal script. Return ONLY valid JSON with this exact structure:
 {{
  "plant": "crop name, and variety only when visually supportable",
  "category": "crop category and growth stage if visible",
@@ -344,6 +357,8 @@ Do not invent weather, soil conditions, crop variety, location, or symptoms. If 
         import json
         result = {**json.loads(text), "demo": False}
         result["language"] = language
+        if segmentation:
+            result["segmentation"] = segmentation
         with connect_db() as db: db.execute("INSERT INTO scans(user_id,crop,result,created_at) VALUES(?,?,?,?)", (user["id"], result.get("plant", "Crop"), json.dumps(result, ensure_ascii=False), now_iso()))
         return result
     except httpx.HTTPStatusError as exc:

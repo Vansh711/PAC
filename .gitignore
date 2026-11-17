@@ -3,6 +3,11 @@
 __pycache__/
 *.pyc
 uploads/
+data/
+models/*.pt
+models/*.pth
 node_modules/
 web-dist/
 khetsaathi.sqlite3
+output/
+tmp/
